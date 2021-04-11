@@ -82,8 +82,10 @@ func dropTableIfExists(tx *sql.Tx, schema, table string) error {
 	if !exists {
 		return nil
 	}
-	sqlStmt := fmt.Sprintf("SELECT DropGeometryTable('%s', '%s');",
-		schema, table)
+	//TODO Cockroach does not provide Drop
+	// sqlStmt := fmt.Sprintf("SELECT DropGeometryTable('%s', '%s');", schema, table)
+	// the following is equal (see https://postgis.net/docs/DropGeometryTable.html)
+	sqlStmt := fmt.Sprintf("DROP TABLE %s.%s;", schema, table)
 	row := tx.QueryRow(sqlStmt)
 	var void interface{}
 	err = row.Scan(&void)

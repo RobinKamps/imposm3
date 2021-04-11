@@ -51,12 +51,17 @@ func (tt *bulkTableTx) Begin(tx *sql.Tx) error {
 	}
 	tt.Tx = tx
 
-	_, err = tx.Exec(fmt.Sprintf(`TRUNCATE TABLE "%s"."%s" RESTART IDENTITY`, tt.Pg.Config.ImportSchema, tt.Table))
+	//TODO Cockroach does not support RESTART IDENTITY
+	//_, err = tx.Exec(fmt.Sprintf(`TRUNCATE TABLE "%s"."%s" RESTART IDENTITY`, tt.Pg.Config.ImportSchema, tt.Table))
+	_, err = tx.Exec(fmt.Sprintf(`TRUNCATE TABLE "%s"."%s"`, tt.Pg.Config.ImportSchema, tt.Table))
 	if err != nil {
 		return err
 	}
 
 	tt.InsertSQL = tt.Spec.CopySQL()
+	//tt.InsertSQL = tt.Spec.InsertSQL()
+	//log.Println("tt.InsertSQL")
+	log.Println(tt.InsertSQL)
 
 	stmt, err := tt.Tx.Prepare(tt.InsertSQL)
 	if err != nil {
@@ -74,6 +79,13 @@ func (tt *bulkTableTx) Insert(row []interface{}) error {
 
 func (tt *bulkTableTx) loop() {
 	for row := range tt.rows {
+
+		//for k, v := range row {
+		//	if k == 5 && tt.Table == "osm_landuse_areas" {
+		//		log.Printf("%v:::%v:::%v", tt.Table, k, v)
+		//	}
+		//}
+
 		_, err := tt.InsertStmt.Exec(row...)
 		if err != nil {
 			// InsertStmt uses COPY so the error may not be related to this row.

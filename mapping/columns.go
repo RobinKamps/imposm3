@@ -1,6 +1,9 @@
 package mapping
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -33,6 +36,7 @@ func init() {
 		"geometry":             {"geometry", "geometry", Geometry, nil, nil, false},
 		"validated_geometry":   {"validated_geometry", "validated_geometry", Geometry, nil, nil, false},
 		"hstore_tags":          {"hstore_tags", "hstore_string", nil, MakeHStoreString, nil, false},
+		"json_tags":            {"json_tags", "json_string", nil, MakeJsonString, nil, false},
 		"wayzorder":            {"wayzorder", "int32", nil, MakeWayZOrder, nil, false},
 		"pseudoarea":           {"pseudoarea", "float32", nil, MakePseudoArea, nil, false},
 		"area":                 {"area", "float32", Area, nil, nil, false},
@@ -198,6 +202,118 @@ func MakeHStoreString(columnName string, columnType ColumnType, column config.Co
 		return strings.Join(tags, ", ")
 	}
 	return hstoreString, nil
+}
+
+//type Attrs map[string]string
+//
+//func (a Attrs) Value() (driver.Value, error) {
+//	return json.Marshal(a)
+//}
+//
+//func (a *Attrs) Scan(value interface{}) error {
+//	b, ok := value.([]byte)
+//	if !ok {
+//		return errors.New("type assertion to []byte failed")
+//	}
+//
+//	return json.Unmarshal(b, &a)
+//}
+
+
+type JSONText []byte
+
+// String implements fmt.Stringer for better output and logging.
+func (j JSONText) String() string {
+	return string(j)
+}
+
+// MarshalJSON returns j as the JSON encoding of j.
+func (j JSONText) MarshalJSON() ([]byte, error) {
+	if j == nil {
+		return []byte(`null`), nil
+	}
+	return j, nil
+}
+
+// UnmarshalJSON sets *j to a copy of data.
+func (j *JSONText) UnmarshalJSON(data []byte) error {
+	if j == nil {
+		return errors.New("JSONText.UnmarshalJSON: on nil pointer")
+	}
+	*j = append((*j)[0:0], data...)
+	return nil
+
+}
+
+// Value implements database/sql/driver Valuer interface.
+// It performs basic validation by unmarshaling itself into json.RawMessage.
+// If j is not valid JSON, it returns and error.
+func (j JSONText) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+
+	var m json.RawMessage
+	var err = json.Unmarshal(j, &m)
+	if err != nil {
+		return []byte{}, err
+	}
+	return []byte(j), nil
+}
+
+// Scan implements database/sql Scanner interface.
+// It store value in *j. No validation is done.
+func (j *JSONText) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return fmt.Errorf("JSONText.Scan: expected []byte or string, got %T (%q)", value, value)
+	}
+
+	*j = JSONText(append((*j)[0:0], b...))
+	return nil
+}
+
+//TODO COPY does not handle strings very well - cockroach does not like \" in a json string...
+//var jsonReplacer = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+//perhaps convert it back
+var jsonReplacer = strings.NewReplacer("\"", "\\u0022")
+
+
+func MakeJsonString(columnName string, columnType ColumnType, column config.Column) (MakeValue, error) {
+	var includeAll bool
+	var err error
+	var include map[string]int
+	if _, ok := column.Args["include"]; !ok {
+		includeAll = true
+	} else {
+		include, err = decodeEnumArg(column, "include")
+		if err != nil {
+			return nil, err
+		}
+
+	}
+	jsonString := func(val string, elem *osm.Element, geom *geom.Geometry, match Match) interface{} {
+		tags := make(map[string]string)
+		for k, v := range elem.Tags {
+			if includeAll || include[k] != 0 {
+				tags[jsonReplacer.Replace(k)] = jsonReplacer.Replace(v)
+				//tags[k] = v
+			}
+		}
+		b, _ := json.Marshal(tags)
+		return string(b)
+	}
+	return jsonString, nil
 }
 
 func MakeWayZOrder(columnName string, columnType ColumnType, column config.Column) (MakeValue, error) {
